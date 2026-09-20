@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Driver Dashboard</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header class="topbar"><div><div class="brand">🚑 Driver Dashboard</div><div class="subtitle">Emergency communication • live demo location • shortest road route</div></div><a class="nav-link" href="index.html">← Emergency Dashboard</a></header>
+<main class="container driver-page">
+<section class="driver-header"><div><span id="driverVehicle" class="eyebrow">AMBULANCE A03</span><h1 id="driverName">Welcome, Vijay</h1><p id="driverAvailability">Available • Waiting for emergency dispatch</p></div><div class="driver-online"><span class="dot"></span> ONLINE</div></section>
+<section id="waiting" class="panel driver-waiting"><div class="empty-icon">📡</div><h2>Waiting for emergency</h2><p>Keep this dashboard open. When the AI dispatcher selects A03, the emergency will appear here immediately.</p><div class="how-small">Open the Emergency Dashboard in another tab and send an emergency.</div></section>
+<section id="incoming" class="hidden">
+<div class="urgent-banner"><div><span class="pulse">●</span> NEW EMERGENCY RECEIVED</div><span id="incomingTime"></span></div>
+<div class="driver-grid">
+<section class="panel"><div class="panel-title"><div><span class="step">01</span><h2>Situation from AI dispatcher</h2></div><span id="driverPriority" class="priority">--</span></div>
+<div class="situation"><div class="situation-row"><small>Emergency</small><b id="driverType">--</b></div><div class="situation-row"><small>Location</small><b id="driverLocation">--</b></div><div class="situation-row"><small>People affected</small><b id="driverPeople">--</b></div><div class="situation-row"><small>Caller information</small><b id="driverDetails">--</b></div></div>
+<button id="acceptBtn" class="primary full">✓ ACCEPT EMERGENCY</button></section>
+<section class="panel"><div class="panel-title"><div><span class="step">02</span><h2>Roadmap & shortest route</h2></div><span class="algorithm">Dijkstra</span></div>
+<div class="route-summary"><div><span>From</span><b id="routeFrom">--</b></div><div><span>To</span><b id="routeTo">--</b></div><div><span>ETA</span><b id="routeEta">--</b><small id="routeEtaLive"></small></div></div>
+<div id="routeMap" class="map-wrap"></div><div id="mapPosition" class="map-position">Waiting for driver acceptance.</div>
+<div class="route-line" id="driverRoute">Route will appear after acceptance.</div></section>
+</div>
+<section class="panel status-panel"><div class="panel-title"><div><span class="step">03</span><h2>Vehicle status</h2></div><span id="statusBadge" class="badge">NEW ALERT</span></div>
+<div class="status-actions"><button class="status-btn" data-status="En Route">🚑 Go to Emergency</button><button class="status-btn" data-status="Arrived">📍 Arrived at Emergency</button><button class="status-btn" data-status="To Hospital">🏥 Go to Hospital</button><button class="status-btn" data-status="Hospital Arrived">🏥 Arrived at Hospital</button><button class="status-btn" data-status="Completed">✓ Completed</button></div>
+<div id="driverLog" class="driver-log">Waiting for driver action.</div></section>
+</section></main>
+<script type="module" src="driver.js"></script></body></html>
