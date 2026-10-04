@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How It Works • Emergency AI Dispatch</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <div class="brand">🚑 Emergency AI Dispatch</div>
+    <div class="subtitle">A quick guide to the emergency dispatch demo</div>
+  </div>
+  <div class="topbar-actions">
+    <a class="nav-link" href="index.html">← Emergency Dashboard</a>
+    <label class="profile-switch-label" for="profileSwitcher">Open</label>
+    <select id="profileSwitcher" class="profile-switcher" aria-label="Open another view">
+      <option value="patient">Caller view</option>
+      <option value="ambulance">Driver view</option>
+      <option value="guide">Help</option>
+    </select>
+  </div>
+</header>
+
+<main class="container guide-page">
+  <section class="guide-intro">
+    <span class="page-kicker"><span class="live-indicator"></span> PROJECT GUIDE</span>
+    <h1>How emergency dispatch works</h1>
+    <p>This demonstration turns a caller's report into a structured emergency, selects an ambulance using shortest-path calculations, and shares the route with the driver dashboard.</p>
+  </section>
+
+  <section class="guide-steps" aria-label="Dispatch workflow">
+    <article class="guide-card">
+      <span class="guide-number">01</span>
+      <div><h2>Report the emergency</h2><p>The Patient / User profile captures the caller's description and a supported location or landmark.</p></div>
+    </article>
+    <article class="guide-card">
+      <span class="guide-number">02</span>
+      <div><h2>Understand the report</h2><p>The browser-based AI classifies the emergency and extracts details. If the model is unavailable, local rule-based extraction is used.</p></div>
+    </article>
+    <article class="guide-card">
+      <span class="guide-number">03</span>
+      <div><h2>Select and notify an ambulance</h2><p>The dispatcher compares available ambulances by their shortest route to the emergency, then sends the request to the Ambulance profile.</p></div>
+    </article>
+    <article class="guide-card">
+      <span class="guide-number">04</span>
+      <div><h2>Track progress and destination</h2><p>The driver can accept the request, travel to the emergency, continue to the selected hospital, and report status updates to the caller dashboard.</p></div>
+    </article>
+  </section>
+
+  <section class="algorithm-card">
+    <div class="algorithm-heading">
+      <span class="algorithm-icon" aria-hidden="true">⌁</span>
+      <div><span class="page-kicker">ROUTE OPTIMIZATION</span><h2>Why Dijkstra's algorithm?</h2></div>
+    </div>
+    <p class="algorithm-lead">Dijkstra's algorithm finds the lowest-cost route through a graph when every road segment has a non-negative weight.</p>
+    <div class="algorithm-details">
+      <div><h3>What the graph represents</h3><p>Locations are graph nodes, and connected roads are edges. Each demo edge has a travel-time weight in minutes.</p></div>
+      <div><h3>How dispatch uses it</h3><p>It calculates a shortest route from each available ambulance to the incident. The ambulance with the smallest route total is selected. The same method finds the shortest route from the incident to a demo hospital.</p></div>
+      <div><h3>What you see</h3><p>The chosen paths and estimated times appear in the dispatch and driver views. During the driver demo, the vehicle marker moves along the calculated path.</p></div>
+    </div>
+    <div class="guide-note"><strong>Prototype note:</strong> Locations, road connections, travel-time weights, and vehicle movement are simulated. These estimates are not live traffic, GPS navigation, or a real emergency service.</div>
+  </section>
+
+  <div class="guide-actions">
+    <a class="primary guide-cta" href="index.html">Go to emergency dashboard</a>
+    <a class="secondary guide-cta-secondary" href="driver.html">Open ambulance dashboard</a>
+  </div>
+</main>
+
+<footer>Academic prototype • Emergency Vehicle Route Optimization using Shortest Path Algorithms</footer>
+<script src="profile-switcher.js" defer></script>
+</body>
+</html>

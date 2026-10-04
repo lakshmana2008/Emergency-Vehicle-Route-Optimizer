@@ -4,66 +4,73 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Emergency AI Dispatch</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
 <link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
 <header class="topbar">
   <div>
     <div class="brand">🚑 Emergency AI Dispatch</div>
-    <div class="subtitle">AI-assisted emergency intake • nearest vehicle • Dijkstra route</div>
+    <div class="subtitle">Emergency help, with a nearby ambulance on the way</div>
   </div>
-  <div class="status"><span id="systemDot" class="dot"></span><span id="systemStatus">System Ready</span></div>
+  <div class="topbar-actions">
+    <div class="status"><span id="systemDot" class="dot"></span><span id="systemStatus">System Ready</span></div>
+    <label class="profile-switch-label" for="profileSwitcher">Open</label>
+    <select id="profileSwitcher" class="profile-switcher" aria-label="Open another view">
+      <option value="patient">Caller view</option>
+      <option value="ambulance">Driver view</option>
+      <option value="guide">Help</option>
+    </select>
+  </div>
 </header>
 
 <main class="container">
-  <section class="hero">
+  <section class="page-heading">
     <div>
-      <span class="eyebrow">EMERGENCY INTAKE</span>
-      <h1>Report an emergency</h1>
-      <p>Tell the dispatcher what happened and where it happened. The AI extracts the useful information and prepares an emergency request for the nearest available ambulance.</p>
+      <span class="page-kicker"><span class="live-indicator"></span> EMERGENCY INTAKE</span>
+      <h1>How can we help?</h1>
+      <p>Tell us what happened and where. We’ll find the closest available ambulance.</p>
     </div>
-    <a class="driver-link" href="driver.html" target="_blank">🚑 Open Driver Dashboard</a>
   </section>
 
   <section class="main-grid">
     <section class="panel">
       <div class="panel-title">
-        <div><span class="step">01</span><h2>Caller information</h2></div>
-        <span class="badge">User</span>
+        <div><span class="step">01</span><h2>Emergency details</h2></div>
+        <span class="badge">Caller</span>
       </div>
 
-      <label for="callerName">Caller name <span>(optional)</span></label>
-      <input id="callerName" placeholder="Example: Rahul">
-
       <label for="emergencyText">What happened?</label>
-      <textarea id="emergencyText" rows="7" placeholder="Example: There has been a road accident near Gandhipuram bus stand. Two people are injured and one person is unconscious.">There has been a road accident near Gandhipuram bus stand. Two people are injured and one person is unconscious.</textarea>
+      <textarea id="emergencyText" rows="5" placeholder="Briefly describe the emergency"></textarea>
 
-      <label for="address">Emergency address / landmark</label>
-      <input id="address" placeholder="Example: Gandhipuram Bus Stand, Coimbatore">
+      <label for="address">Where did it happen?</label>
+      <input id="address" placeholder="Area or landmark, e.g. Gandhipuram">
+      <small class="field-hint">Use a mapped area: Gandhipuram, Town Hall, RS Puram, Ukkadam, Saibaba Colony or Race Course.</small>
 
-      <button id="sendBtn" class="primary full">🚨 SEND EMERGENCY</button>
-      <button id="demoBtn" class="secondary full">▶ Fill Demo Emergency</button>
+      <button id="sendBtn" class="primary full">Send emergency</button>
+      <button id="demoBtn" class="secondary full">Use sample details</button>
 
       <div id="aiLoading" class="loading hidden">
         <div class="spinner"></div>
-        <div><b id="loadingTitle">AI dispatcher is analysing...</b><small id="loadingText">First run may download the pretrained model.</small></div>
+        <div><b id="loadingTitle">Checking emergency details...</b><small id="loadingText">Finding a nearby driver and preparing the route.</small></div>
       </div>
 
       <div class="info-note">
-        <b>Demo architecture:</b> the caller sends information → AI dispatcher structures it → the system selects an available ambulance → Dijkstra calculates the shortest travel-time route → the driver dashboard receives the emergency.
+        Your report is shared with the selected driver. This prototype uses simulated locations and routes.
       </div>
     </section>
 
     <section class="panel">
       <div class="panel-title">
-        <div><span class="step">02</span><h2>AI dispatcher result</h2></div>
+        <div><span class="step">02</span><h2>Dispatch update</h2></div>
         <span id="aiBadge" class="badge muted">Waiting</span>
       </div>
 
       <div id="resultEmpty" class="empty">
         <div class="empty-icon">🤖</div>
         <h3>Waiting for emergency information</h3>
-        <p>Send a caller message to let the AI dispatcher prepare the emergency request.</p>
+        <p>Send your details to see the assigned ambulance and route.</p>
       </div>
 
       <div id="result" class="hidden">
@@ -77,32 +84,25 @@
           </div>
         </div>
 
-        <div class="dispatch-card">
-          <div class="card-heading"><b>📍 Vehicle selection</b><span id="vehicleStatus" class="small-status">Calculating...</span></div>
-          <div id="vehicleList"></div>
+        <div class="dispatch-card live-tracking-card">
+          <div class="card-heading"><b>📍 Ambulance location</b><span id="driverReturnBadge" class="small-status">Waiting for driver</span></div>
+          <div id="driverReturn" class="driver-return">The driver’s location will appear here after accepting the request.</div>
+          <div class="map-wrap map-live">
+            <div id="userMapLeaflet" class="leaflet-map" role="region" aria-label="OpenStreetMap showing the ambulance, emergency, and hospital"></div>
+          </div>
+          <div id="userMapPosition" class="map-position">Waiting for driver acceptance.</div>
         </div>
 
         <div class="dispatch-card">
-          <div class="card-heading"><b>🧮 Shortest route</b><span class="algorithm">Dijkstra</span></div>
+          <div class="card-heading"><b>🚑 Ambulance route</b><span class="algorithm">To you</span></div>
           <div id="routeBox" class="route-box">Waiting for route calculation...</div>
         </div>
 
         <div class="dispatch-card">
-          <div class="card-heading"><b>🏥 Emergency → Hospital</b><span class="algorithm">Dijkstra</span></div>
+          <div class="card-heading"><b>🏥 Hospital destination</b><span class="algorithm">Next</span></div>
           <div id="hospitalRouteBox" class="route-box">The nearest hospital and shortest hospital route will appear here.</div>
         </div>
 
-        <div class="dispatch-card">
-          <div class="card-heading"><b>📱 Driver notification</b><span id="sendStatus" class="small-status">Not sent</span></div>
-          <div id="driverPreview" class="driver-preview">The selected driver will receive the emergency here.</div>
-        </div>
-
-        <div class="dispatch-card live-tracking-card">
-          <div class="card-heading"><b>📡 Driver return information</b><span id="driverReturnBadge" class="small-status">Waiting for driver</span></div>
-          <div id="driverReturn" class="driver-return">The driver will send an acceptance/status update back to the user here.</div>
-          <div id="userRouteMap" class="map-wrap"></div>
-          <div id="userMapPosition" class="map-position">Live driver location will appear after the driver accepts.</div>
-        </div>
       </div>
     </section>
   </section>
@@ -113,22 +113,21 @@
   </section>
 
   <section class="panel architecture">
-    <h2>How your project works</h2>
+    <h2>What happens next</h2>
     <div class="flow">
-      <div><span>👤</span><b>Caller</b><small>Emergency details</small></div>
+      <div><span>📝</span><b>Share details</b><small>Tell us what happened</small></div>
       <div class="arrow">→</div>
-      <div><span>🤖</span><b>Pretrained AI</b><small>Extract + classify</small></div>
+      <div><span>🤖</span><b>Find help</b><small>Choose an available driver</small></div>
       <div class="arrow">→</div>
-      <div><span>🚑</span><b>Nearest Vehicle</b><small>Availability + distance</small></div>
+      <div><span>🚑</span><b>Driver responds</b><small>Accepts and travels to you</small></div>
       <div class="arrow">→</div>
-      <div><span>🧮</span><b>Dijkstra</b><small>Shortest travel time</small></div>
-      <div class="arrow">→</div>
-      <div><span>📱</span><b>Driver</b><small>Instant alert + route</small></div>
+      <div><span>🏥</span><b>Hospital</b><small>Driver shares the arrival</small></div>
     </div>
   </section>
 </main>
 
 <footer>Academic prototype • Emergency Vehicle Route Optimization using Shortest Path Algorithms</footer>
+<script src="profile-switcher.js" defer></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

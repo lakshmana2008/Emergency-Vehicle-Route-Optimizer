@@ -38,7 +38,7 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));}
 
-function setLoading(show,title="AI dispatcher is analysing...",text="First run may download the pretrained model."){
+function setLoading(show,title="Checking emergency details...",text="Finding a nearby driver and preparing the route."){
   $("aiLoading").classList.toggle("hidden",!show);
   $("loadingTitle").textContent=title;
   $("loadingText").textContent=text;
@@ -103,7 +103,7 @@ function ruleFallback(text,address){
 
 async function getAI(){
   if(generator) return generator;
-  setLoading(true,"Loading pretrained AI...","The model runs in your browser. This first download can take a little time.");
+  setLoading(true,"Checking emergency details...","Finding a nearby driver and preparing the route.");
   generator = await pipeline("text2text-generation", MODEL, {dtype:"q8"});
   return generator;
 }
@@ -112,7 +112,7 @@ async function analyzeWithAI(text,address){
   const fallback=ruleFallback(text,address);
   try{
     const ai=await getAI();
-    setLoading(true,"AI dispatcher is analysing...","Extracting emergency type, location, people affected and urgency from the caller's words.");
+    setLoading(true,"Checking emergency details...","Finding a nearby driver and preparing the route.");
     const prompt=`Extract information from this emergency report. Return one short line in this exact format:
 TYPE=Road Accident|Medical Emergency|Fire Emergency|Other; LOCATION=location mentioned; PEOPLE=number if stated; PRIORITY=Critical|High|Normal.
 Do not invent information. If a field is not stated, use Unknown.
@@ -183,14 +183,6 @@ function candidateHospitals(from){
 
 function hospitalName(id){ return hospitals[id]?.name || "Hospital"; }
 
-function renderVehicles(candidates,selected){
-  $("vehicleList").innerHTML=candidates.map((v,i)=>`
-    <div class="vehicle-row ${v.id===selected.id?"selected":""}">
-      <div class="vehicle-name"><b>🚑 ${escapeHtml(v.id)} — ${escapeHtml(v.driver)}</b><small>Available • ${escapeHtml(locations[v.start].name)}</small></div>
-      <div class="vehicle-distance"><b>${v.distance.toFixed(1)} min</b><small>${v.id===selected.id?"Selected":"Available"}</small></div>
-    </div>`).join("");
-}
-
 function publish(request){
   localStorage.setItem("emergency_dispatch_request",JSON.stringify(request));
   localStorage.setItem("emergency_dispatch_updated",String(Date.now()));
@@ -200,22 +192,107 @@ function publish(request){
   }
 }
 
+let liveMap = null;
+let liveMapMarkers = [];
+let liveMapRoute = null;
+let liveMapBounds = null;
+const mapPositions = {
+  A: [11.0056, 76.9744],
+  B: [11.0232, 76.9545],
+  C: [10.9957, 76.9618],
+  D: [10.9925, 76.9607],
+  E: [11.0048, 76.9674],
+  F: [11.0168, 76.9674],
+  H1: [10.9941, 76.9635],
+  H2: [11.0187, 76.9510],
+  H3: [11.0194, 76.9701]
+};
+
+function ensureLeafletMap(){
+  const mapEl = document.getElementById("userMapLeaflet");
+  if (!mapEl) return null;
+  if (liveMap) {
+    liveMap.invalidateSize();
+    return liveMap;
+  }
+  liveMap = window.L.map(mapEl, { zoomControl: true, scrollWheelZoom: false }).setView([11.0168, 76.9558], 12);
+  window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(liveMap);
+  return liveMap;
+}
+
+function routePosition(routeIds, progress){
+  if (!routeIds?.length) return null;
+  const segmentCount = routeIds.length - 1;
+  if (!segmentCount) return mapPositions[routeIds[0]] || null;
+  const routeProgress = Math.max(0, Math.min(1, progress)) * segmentCount;
+  const segment = Math.min(segmentCount - 1, Math.floor(routeProgress));
+  const fraction = routeProgress - segment;
+  const from = mapPositions[routeIds[segment]];
+  const to = mapPositions[routeIds[segment + 1]];
+  if (!from || !to) return null;
+  return [from[0] + (to[0] - from[0]) * fraction, from[1] + (to[1] - from[1]) * fraction];
+}
+
+function updateLiveMap(requestData){
+  const map = ensureLeafletMap();
+  if (!map) return;
+  liveMapMarkers.forEach(marker => marker.remove());
+  liveMapMarkers = [];
+  if (liveMapRoute) liveMapRoute.remove();
+
+  const emergencyLocation = mapPositions[requestData?.locationId] || mapPositions.D;
+  const selectedVehicle = mapPositions[requestData?.vehicleStart] || mapPositions.A;
+  const hospitalLocation = mapPositions[requestData?.hospitalId] || mapPositions.H1;
+  const hospitalPhase = ["To Hospital", "Hospital Arrived", "Completed"].includes(requestData?.status);
+  const routeIds = hospitalPhase ? requestData?.hospitalRouteIds : requestData?.routeIds;
+  const progress = Number(requestData?.progress || 0);
+  const currentPosition = hospitalPhase
+    ? routePosition(routeIds, progress)
+    : requestData?.status === "Arrived"
+      ? emergencyLocation
+      : routePosition(routeIds, progress) || selectedVehicle;
+
+  const emergencyMarker = window.L.marker(emergencyLocation).addTo(map)
+    .bindPopup(`<b>${escapeHtml(requestData?.location || "Emergency")}</b>`);
+  liveMapMarkers.push(emergencyMarker);
+
+  const hospitalMarker = window.L.marker(hospitalLocation).addTo(map)
+    .bindPopup(`<b>${escapeHtml(requestData?.hospital || "Hospital")}</b>`);
+  liveMapMarkers.push(hospitalMarker);
+
+  const ambulanceMarker = window.L.marker(currentPosition || selectedVehicle).addTo(map)
+    .bindPopup(`<b>${escapeHtml(requestData?.vehicleId || "Ambulance")}</b><br>${escapeHtml(requestData?.driver || "Driver")}`);
+  liveMapMarkers.push(ambulanceMarker);
+
+  const routePositions = (routeIds || []).map(id => mapPositions[id]).filter(Boolean);
+  if (routePositions.length > 1) {
+    liveMapRoute = window.L.polyline(routePositions, { color: "#1769e0", weight: 5 }).addTo(map);
+  }
+
+  const bounds = window.L.latLngBounds([emergencyLocation, selectedVehicle, hospitalLocation, ...(routePositions || [])]);
+  if (!liveMapBounds || !liveMapBounds.equals(bounds)) {
+    liveMapBounds = bounds;
+    map.fitBounds(bounds.pad(0.2));
+  }
+  map.invalidateSize();
+}
+
 async function sendEmergency(){
   const text=$("emergencyText").value.trim();
   const address=$("address").value.trim();
   if(!text && !address){alert("Please enter the emergency information.");return;}
   $("sendBtn").disabled=true; $("demoBtn").disabled=true; $("systemStatus").textContent="Dispatching...";
   $("resultEmpty").classList.add("hidden"); $("result").classList.remove("hidden");
-  $("aiBadge").textContent="Analysing"; $("aiBadge").className="badge";
-  $("vehicleList").innerHTML="Calculating available vehicles...";
+  $("aiBadge").textContent="Preparing"; $("aiBadge").className="badge";
   $("routeBox").textContent="Waiting for AI analysis...";
-  $("driverPreview").textContent="Preparing driver notification...";
   $("timeline").innerHTML="";
   addTimeline("📞 Caller information received","active");
   await sleep(350);
   const ai=await analyzeWithAI(text,address);
   setLoading(false);
-  addTimeline(`🤖 AI extracted: ${ai.type} • ${ai.priority}`);
+  addTimeline(`Emergency identified: ${ai.type} • ${ai.priority}`);
   await sleep(300);
 
   const target=ai.locationId;
@@ -234,20 +311,16 @@ async function sendEmergency(){
   const hospitalRoute=selectedHospital.route;
   const hospitalEta=Math.max(1,Math.round(hospitalRoute.distance));
 
-  $("aiBadge").textContent="Decision Ready"; $("aiBadge").className="badge";
+  $("aiBadge").textContent="Driver selected"; $("aiBadge").className="badge";
   $("typeValue").textContent=ai.type;
   $("locationValue").textContent=ai.location || locations[target].name;
   $("peopleValue").textContent=ai.people;
   $("vehicleValue").textContent=`${selected.id} — ${selected.driver}`;
   $("priorityBadge").textContent=ai.priority;
   $("priorityBadge").className="priority "+ai.priority.toLowerCase();
-  $("vehicleStatus").textContent="Selected nearest by travel time";
-  renderVehicles(candidates,selected);
-  $("routeBox").innerHTML=`<div><b>Phase 1 — Ambulance → Emergency</b></div><div class="route-path">${route.path.map(id=>locations[id]?.name || hospitalName(id)).join(" → ")}</div><div><b>ETA:</b> ${eta} minutes</div><hr><div><b>Phase 2 — Emergency → Nearest Hospital</b></div><div class="route-path">${hospitalRoute.path.map(id=>locations[id]?.name || hospitalName(id)).join(" → ")}</div><div><b>Hospital:</b> ${escapeHtml(selectedHospital.name)} • <b>ETA:</b> ${hospitalEta} minutes</div>`;
+  $("routeBox").innerHTML=`<div class="route-path">${route.path.map(id=>locations[id]?.name || hospitalName(id)).join(" → ")}</div><div><b>Estimated time:</b> ${eta} minutes</div>`;
   if($("hospitalValue")) $("hospitalValue").textContent=selectedHospital.name;
   if($("hospitalRouteBox")) $("hospitalRouteBox").innerHTML=`<b>${escapeHtml(selectedHospital.name)}</b><br>${hospitalRoute.path.map(id=>locations[id]?.name || hospitalName(id)).join(" → ")}<br><b>${hospitalEta} min</b>`;
-  $("sendStatus").textContent="Sending now";
-  $("driverPreview").innerHTML=`<b>🚨 NEW EMERGENCY → ${escapeHtml(selected.driver)}</b><br>Priority: <b>${escapeHtml(ai.priority)}</b><br>Location: <b>${escapeHtml(ai.location || locations[target].name)}</b><br>Situation: ${escapeHtml(text)}<br>Emergency route: <b>${route.path.map(id=>locations[id].name).join(" → ")}</b><br>ETA to emergency: <b>${eta} min</b><br>Hospital: <b>${escapeHtml(selectedHospital.name)}</b><br>Hospital route: <b>${hospitalRoute.path.map(id=>locations[id]?.name || hospitalName(id)).join(" → ")}</b>`;
   addTimeline(`🚑 ${selected.id} (${selected.driver}) selected as nearest available vehicle`);
   await sleep(250);
   addTimeline(`🧮 Dijkstra route calculated: ${route.path.join(" → ")}`);
@@ -255,7 +328,7 @@ async function sendEmergency(){
 
   currentRequest={
     id:"EMG-"+Date.now(), timestamp:new Date().toLocaleTimeString(),
-    caller:$("callerName").value.trim() || "Caller",
+    caller:"Caller",
     text,address,
     type:ai.type,priority:ai.priority,people:ai.people,
     location:ai.location || locations[target].name, locationId:target,
@@ -265,11 +338,10 @@ async function sendEmergency(){
     status:"NEW EMERGENCY", phase:"toEmergency", aiSource:ai.aiSource
   };
   publish(currentRequest);
-  $("userRouteMap").innerHTML=trackingMap(currentRequest.routeIds,0);
+  updateLiveMap(currentRequest);
   $("userMapPosition").textContent=`🚑 ${selected.driver} is waiting at ${locations[selected.start].name}`;
   $("driverReturnBadge").textContent="NEW EMERGENCY";
   $("driverReturn").innerHTML=`<strong>📱 Emergency sent to ${escapeHtml(selected.driver)}</strong><br>Waiting for driver acceptance.`;
-  $("sendStatus").textContent="Sent instantly";
   addTimeline(`📱 Emergency sent instantly to Driver Dashboard — ${selected.driver}`);
   $("systemStatus").textContent="Emergency Dispatched";
   $("systemDot").style.background="#ffbd3e";
@@ -277,20 +349,6 @@ async function sendEmergency(){
 }
 
 
-const trackingNodes={
-  A:{name:"Race Course",x:95,y:85},B:{name:"Saibaba Colony",x:315,y:65},C:{name:"Ukkadam",x:285,y:230},
-  D:{name:"Town Hall",x:510,y:195},E:{name:"RS Puram",x:575,y:70},F:{name:"Gandhipuram",x:685,y:275},
-  H1:{name:"Town Hall Emergency Hospital",x:605,y:135},H2:{name:"Saibaba Care Hospital",x:405,y:35},H3:{name:"Gandhipuram City Hospital",x:765,y:210}
-};
-const trackingEdges=[["A","B",4],["A","C",5],["B","C",3],["B","E",4],["C","D",3],["C","F",8],["D","E",2],["D","F",4],["E","F",6],["D","H1",2],["B","H2",2],["F","H3",2]];
-function trackingMap(routeIds=[],progress=0){
-  const active=new Set(); for(let i=0;i<routeIds.length-1;i++){active.add(routeIds[i]+"-"+routeIds[i+1]);active.add(routeIds[i+1]+"-"+routeIds[i]);}
-  const lines=trackingEdges.map(([a,b,w])=>{const n=trackingNodes[a],m=trackingNodes[b];const mx=(n.x+m.x)/2,my=(n.y+m.y)/2-10;return `<line x1="${n.x}" y1="${n.y}" x2="${m.x}" y2="${m.y}" class="road ${active.has(a+"-"+b)?"route-road":""}"/><g class="road-label-group"><rect x="${mx-15}" y="${my-10}" width="30" height="18" rx="7"/><text x="${mx}" y="${my+3}" text-anchor="middle" class="road-label">${w}m</text></g>`;}).join("");
-  const nodes=Object.entries(trackingNodes).map(([id,n])=>{const isHospital=id.startsWith("H");const labelY=isHospital?n.y+34:n.y+39;const labelClass=isHospital?"node-name hospital-name":"node-name";return `<g class="map-node-group ${isHospital?"hospital-node":""}"><circle cx="${n.x}" cy="${n.y}" r="${isHospital?20:19}" class="map-node"/><text x="${n.x}" y="${n.y+5}" text-anchor="middle" class="node-id">${id}</text><rect x="${n.x-58}" y="${labelY-13}" width="116" height="${isHospital?30:22}" rx="7" class="node-label-bg"/><text x="${n.x}" y="${labelY+2}" text-anchor="middle" class="${labelClass}">${escapeHtml(n.name)}</text></g>`;}).join("");
-  let marker="";
-  if(routeIds.length){const max=Math.max(0,routeIds.length-1),pos=Math.min(max,Math.max(0,progress||0)*max),i=Math.min(max-1,Math.floor(pos)),t=max?pos-i:0;const from=trackingNodes[routeIds[Math.max(0,i)]],to=trackingNodes[routeIds[Math.min(max,i+1)]]||from;const x=from.x+(to.x-from.x)*t,y=from.y+(to.y-from.y)*t;marker=`<g class="ambulance-marker"><circle cx="${x}" cy="${y}" r="15"/><text x="${x}" y="${y+5}" text-anchor="middle">🚑</text></g>`;}
-  return `<svg class="roadmap" viewBox="0 0 830 350"><rect x="0" y="0" width="780" height="350" rx="16" class="map-bg"/>${lines}${nodes}${marker}</svg>`;
-}
 function showDriverReturn(r){
   if(!r || !currentRequest || r.id!==currentRequest.id) return;
   const status=r.status||"NEW EMERGENCY", progress=Number(r.progress||0);
@@ -299,8 +357,7 @@ function showDriverReturn(r){
   const current=r.currentNode || r.vehicleStartName || "Vehicle base";
   const messages={"Accepted":"Driver accepted the emergency. Ambulance is preparing to depart.","En Route":"Driver is travelling to the emergency location.","Arrived":"Driver has arrived at the emergency location and is ready for the hospital trip.","To Hospital":"Driver is taking the patient to the selected hospital.","Hospital Arrived":"Driver has arrived at the selected hospital.","Completed":"Emergency trip completed at the hospital."};
   $("driverReturn").innerHTML=`<strong>🚑 ${escapeHtml(r.driver)} (${escapeHtml(r.vehicleId)})</strong><br>${messages[status]||"Emergency sent to driver."}<br><b>Current location:</b> ${escapeHtml(current)}${status==="En Route"?`<br><b>ETA remaining:</b> ${Math.max(0,Math.ceil((r.eta||1)*(1-progress)))} min`:""}`;
-  const activeRoute=status==="To Hospital"||status==="Hospital Arrived"||status==="Completed"?(r.hospitalRouteIds||[]):(r.routeIds||[]);
-  $("userRouteMap").innerHTML=trackingMap(activeRoute,progress);
+  updateLiveMap(r);
   $("userMapPosition").textContent=status==="Arrived"?`📍 Ambulance arrived at ${r.location}. Next: ${r.hospital}.`:status==="Hospital Arrived"?`🏥 Ambulance arrived at ${r.hospital}.`:status==="Completed"?`✓ Emergency completed at ${r.hospital}.`:`🚑 Ambulance position: ${current}`;
 }
 
@@ -313,7 +370,7 @@ function restoreSavedRequest(){
     currentRequest=r;
     $("resultEmpty").classList.add("hidden");
     $("result").classList.remove("hidden");
-    $("aiBadge").textContent="Restored";
+    $("aiBadge").textContent="Active request";
     $("aiBadge").className="badge";
     $("typeValue").textContent=r.type || "Unknown";
     $("locationValue").textContent=r.location || "Unknown";
@@ -321,13 +378,10 @@ function restoreSavedRequest(){
     $("vehicleValue").textContent=`${r.vehicleId || "--"} — ${r.driver || "Driver"}`;
     $("priorityBadge").textContent=r.priority || "Normal";
     $("priorityBadge").className="priority "+String(r.priority||"Normal").toLowerCase();
-    $("vehicleStatus").textContent=r.status==="Completed"?"Trip completed":"Emergency active";
-    $("routeBox").innerHTML=`<div><b>Phase 1 — Ambulance → Emergency</b></div><div class="route-path">${(r.route||[]).map(escapeHtml).join(" → ")}</div><div><b>ETA:</b> ${r.eta||"--"} minutes</div><hr><div><b>Phase 2 — Emergency → Hospital</b></div><div class="route-path">${(r.hospitalRoute||[]).map(escapeHtml).join(" → ")}</div><div><b>Hospital:</b> ${escapeHtml(r.hospital||"--")} • <b>ETA:</b> ${r.hospitalEta||"--"} minutes</div>`;
+    $("routeBox").innerHTML=`<div class="route-path">${(r.route||[]).map(escapeHtml).join(" → ")}</div><div><b>Estimated time:</b> ${r.eta||"--"} minutes</div>`;
     if($("hospitalValue")) $("hospitalValue").textContent=r.hospital||"--";
     if($("hospitalRouteBox")) $("hospitalRouteBox").innerHTML=`<b>${escapeHtml(r.hospital||"--")}</b><br>${(r.hospitalRoute||[]).map(escapeHtml).join(" → ")}<br><b>${r.hospitalEta||"--"} min</b>`;
-    $("driverPreview").innerHTML=`<b>🚨 ${escapeHtml(r.driver||"Driver")} (${escapeHtml(r.vehicleId||"--")})</b><br>Location: <b>${escapeHtml(r.location||"Unknown")}</b><br>Status: <b>${escapeHtml(r.status||"NEW EMERGENCY")}</b>`;
-    $("sendStatus").textContent="Active request restored";
-    $("userRouteMap").innerHTML=trackingMap(r.routeIds||[],Number(r.progress||0));
+    updateLiveMap(r);
     showDriverReturn(r);
     $("systemStatus").textContent=r.status==="Completed"?"Emergency Completed":"Emergency Dispatched";
     $("systemDot").style.background=r.status==="Completed"?"#35d07f":"#ffbd3e";
@@ -343,7 +397,6 @@ restoreSavedRequest();
 
 $("sendBtn").addEventListener("click",sendEmergency);
 $("demoBtn").addEventListener("click",()=>{
-  $("callerName").value="Rahul";
   $("emergencyText").value="There has been a road accident near Gandhipuram bus stand. Two people are injured and one person is unconscious.";
   $("address").value="Gandhipuram Bus Stand, Coimbatore";
 });
