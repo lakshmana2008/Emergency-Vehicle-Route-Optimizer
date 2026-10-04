@@ -2,7 +2,7 @@
 
 ## Map and route integration
 - Enter a street, landmark, town, or city and the app looks it up with OpenStreetMap Nominatim.
-- Candidate demo ambulance bases are compared using OSRM road-driving times; the closest reachable base is selected.
+- Three simulated ambulance locations are placed near each incident and compared using OSRM road-driving times; the closest reachable route is selected. These locations are not real ambulances or live GPS.
 - Nearby hospitals are discovered from OpenStreetMap (with Nominatim fallback if Overpass is unavailable) and ranked by OSRM driving time. Both routes are shown on OSM maps.
 - The driver dashboard accepts the emergency and simulates progress along the returned road geometry.
 - Driver status updates are shared with the caller dashboard, and the active request is restored when the page is reopened.
@@ -18,4 +18,4 @@
 8. Switch back to Patient / User. The same emergency and the driver's latest status are shown.
 
 ## Important
-OpenStreetMap map data and OSRM road-driving routes are fetched from public services and may be unavailable or rate-limited. Their drive times do not include live traffic or emergency-vehicle rules. Ambulance bases and availability remain simulated at fixed Coimbatore locations, so a dispatch to another city can show a very long route and is not a real nearby emergency response. The animated vehicle is not live GPS. This academic prototype is not connected to emergency services.
+OpenStreetMap map data and OSRM road-driving routes are fetched from public services and may be unavailable or rate-limited. Their drive times do not include live traffic or emergency-vehicle rules. Ambulance locations and availability are simulated near each entered incident; the demo has no real ambulance locations, dispatch availability, or live GPS. The animated vehicle is simulated. This academic prototype is not connected to emergency services.

@@ -16,9 +16,9 @@ const locations = {
 };
 
 const vehicles = [
-  {id:"A01",driver:"Arun",start:"A",available:true,coordinates:[11.0056,76.9744]},
-  {id:"A02",driver:"Karthik",start:"B",available:true,coordinates:[11.0232,76.9545]},
-  {id:"A03",driver:"Vijay",start:"E",available:true,coordinates:[11.0048,76.9674]}
+  {id:"A01",driver:"Arun",available:true},
+  {id:"A02",driver:"Karthik",available:true},
+  {id:"A03",driver:"Vijay",available:true}
 ];
 
 const $ = id => document.getElementById(id);
@@ -194,6 +194,20 @@ function distanceBetween(a,b){
   const dLat=lat2-lat1,dLon=lon2-lon1;
   const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
   return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
+}
+
+function simulatedVehiclesNear([latitude,longitude]){
+  const metersPerDegree=111320;
+  const longitudeScale=metersPerDegree*Math.cos(latitude*Math.PI/180);
+  const offsetsInMeters=[[900,0],[-450,780],[-450,-780]];
+  return vehicles.filter(vehicle=>vehicle.available).map((vehicle,index)=>{
+    const [north,east]=offsetsInMeters[index%offsetsInMeters.length];
+    return {
+      ...vehicle,
+      startName:`Nearby demo base ${index+1} (simulated)`,
+      coordinates:[latitude+north/metersPerDegree,longitude+east/longitudeScale]
+    };
+  });
 }
 
 async function findHospitalsWithNominatim(location){
@@ -396,7 +410,7 @@ async function sendEmergency(){
     addTimeline(`📍 Location found: ${incident.name}`);
 
     const hospitalCandidates=await findNearbyHospitals(incident);
-    const availableVehicles=vehicles.filter(vehicle=>vehicle.available);
+    const availableVehicles=simulatedVehiclesNear(incident.coordinates);
     const [vehicleTable,hospitalTable]=await Promise.all([
       osrmTable(availableVehicles.map(vehicle=>vehicle.coordinates),[incident.coordinates]),
       osrmTable([incident.coordinates],hospitalCandidates.map(hospital=>hospital.coordinates))
@@ -438,7 +452,8 @@ async function sendEmergency(){
     $("vehicleValue").textContent=`${selected.id} — ${selected.driver}`;
     $("priorityBadge").textContent=ai.priority;
     $("priorityBadge").className="priority "+ai.priority.toLowerCase();
-    $("routeBox").innerHTML=`<div class="route-path">${escapeHtml(selected.start==="A"?"Race Course":selected.start==="B"?"Saibaba Colony":"RS Puram")} → ${escapeHtml(incident.name)}</div><div><b>Road distance:</b> ${formatDistance(route.distance)} • <b>Estimated drive:</b> ${eta} min</div>`;
+    selected.coordinates=route.coordinates[0];
+    $("routeBox").innerHTML=`<div class="route-path">${escapeHtml(selected.startName)} → ${escapeHtml(incident.name)}</div><div><b>Road distance:</b> ${formatDistance(route.distance)} • <b>Estimated drive:</b> ${eta} min</div>`;
     $("hospitalValue").textContent=selectedHospital.name;
     $("hospitalRouteBox").innerHTML=`<b>${escapeHtml(selectedHospital.name)}</b><br><b>Road distance:</b> ${formatDistance(hospitalRoute.distance)} • <b>Estimated drive:</b> ${hospitalEta} min`;
 
@@ -446,9 +461,8 @@ async function sendEmergency(){
       id:"EMG-"+Date.now(),timestamp:new Date().toLocaleTimeString(),
       caller:"Caller",text,address,type:ai.type,priority:ai.priority,people:ai.people,
       location:incident.name,locationCoordinates:incident.coordinates,
-      vehicleId:selected.id,driver:selected.driver,vehicleStart:selected.start,
-      vehicleStartName:locations[selected.start].name,vehicleCoordinates:selected.coordinates,
-      route:[selected.start==="A"?"Race Course":selected.start==="B"?"Saibaba Colony":"RS Puram",incident.name],
+      vehicleId:selected.id,driver:selected.driver,vehicleStartName:selected.startName,vehicleCoordinates:selected.coordinates,
+      route:[selected.startName,incident.name],
       routeCoordinates:route.coordinates,routeDistance:route.distance,eta,
       hospital:selectedHospital.name,hospitalCoordinates:selectedHospital.coordinates,
       hospitalRoute:[incident.name,selectedHospital.name],hospitalRouteCoordinates:hospitalRoute.coordinates,
@@ -457,9 +471,9 @@ async function sendEmergency(){
     };
     publish(currentRequest);
     updateLiveMap(currentRequest);
-    $("userMapPosition").textContent=`🚑 ${selected.driver} is waiting at the demo base in ${selected.start==="A"?"Race Course":selected.start==="B"?"Saibaba Colony":"RS Puram"}, Coimbatore.`;
+    $("userMapPosition").textContent=`🚑 ${selected.driver} is simulated near the reported location; this is not live vehicle GPS.`;
     $("driverReturnBadge").textContent="NEW EMERGENCY";
-    $("driverReturn").innerHTML=`<strong>📱 Emergency sent to ${escapeHtml(selected.driver)}</strong><br>Ambulance movement is simulated from its demo base.`;
+    $("driverReturn").innerHTML=`<strong>📱 Emergency sent to ${escapeHtml(selected.driver)}</strong><br>Nearby demo ambulance location is simulated, not live GPS.`;
     addTimeline(`📱 Emergency sent to Driver Dashboard — ${selected.driver}`);
     $("systemStatus").textContent="Emergency Dispatched";
     $("systemDot").style.background="#ffbd3e";
