@@ -27,7 +27,7 @@
   <section class="guide-intro">
     <span class="page-kicker"><span class="live-indicator"></span> PROJECT GUIDE</span>
     <h1>How emergency dispatch works</h1>
-    <p>This demonstration turns a caller's report into a structured emergency, selects an ambulance using shortest-path calculations, and shares the route with the driver dashboard.</p>
+    <p>This demonstration looks up the caller's location, finds nearby hospitals, compares demo ambulances by road travel time, and shares the routes with the driver dashboard.</p>
   </section>
 
   <section class="guide-steps" aria-label="Dispatch workflow">
@@ -52,15 +52,15 @@
   <section class="algorithm-card">
     <div class="algorithm-heading">
       <span class="algorithm-icon" aria-hidden="true">⌁</span>
-      <div><span class="page-kicker">ROUTE OPTIMIZATION</span><h2>Why Dijkstra's algorithm?</h2></div>
+      <div><span class="page-kicker">OPENSTREETMAP ROUTING</span><h2>How routes are found</h2></div>
     </div>
-    <p class="algorithm-lead">Dijkstra's algorithm finds the lowest-cost route through a graph when every road segment has a non-negative weight.</p>
+    <p class="algorithm-lead">OpenStreetMap finds the address and nearby hospitals. OSRM calculates driving routes and estimated times over the mapped road network.</p>
     <div class="algorithm-details">
-      <div><h3>What the graph represents</h3><p>Locations are graph nodes, and connected roads are edges. Each demo edge has a travel-time weight in minutes.</p></div>
-      <div><h3>How dispatch uses it</h3><p>It calculates a shortest route from each available ambulance to the incident. The ambulance with the smallest route total is selected. The same method finds the shortest route from the incident to a demo hospital.</p></div>
-      <div><h3>What you see</h3><p>The chosen paths and estimated times appear in the dispatch and driver views. During the driver demo, the vehicle marker moves along the calculated path.</p></div>
+      <div><h3>Address and hospitals</h3><p>OpenStreetMap searches the entered address and hospitals within 30 km of the incident.</p></div>
+      <div><h3>Ambulance selection</h3><p>OSRM compares drivable travel times from the available demo ambulance bases and routes the closest one to the incident.</p></div>
+      <div><h3>What you see</h3><p>Both dashboards show the actual mapped road geometries and estimated drive distances. The animated vehicle position remains a simulation.</p></div>
     </div>
-    <div class="guide-note"><strong>Prototype note:</strong> Locations, road connections, travel-time weights, and vehicle movement are simulated. These estimates are not live traffic, GPS navigation, or a real emergency service.</div>
+    <div class="guide-note"><strong>Prototype note:</strong> Ambulance bases are fixed demo locations in Coimbatore, not live vehicles. Routing and hospital data may be limited by public-service availability; drive estimates are not live traffic or emergency-vehicle navigation.</div>
   </section>
 
   <div class="guide-actions">

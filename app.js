@@ -15,22 +15,10 @@ const locations = {
   F:{name:"Gandhipuram", x:680, y:305}
 };
 
-const hospitals = {
-  H1:{name:"Town Hall Emergency Hospital", x:610, y:225, near:"D"},
-  H2:{name:"Saibaba Care Hospital", x:420, y:55, near:"B"},
-  H3:{name:"Gandhipuram City Hospital", x:735, y:305, near:"F"}
-};
-
-const edges = [
-  ["A","B",4],["A","C",5],["B","C",3],["B","E",4],
-  ["C","D",3],["C","F",8],["D","E",2],["D","F",4],["E","F",6],
-  ["D","H1",2],["B","H2",2],["F","H3",2]
-];
-
 const vehicles = [
-  {id:"A01",driver:"Arun",start:"A",available:true},
-  {id:"A02",driver:"Karthik",start:"B",available:true},
-  {id:"A03",driver:"Vijay",start:"E",available:true}
+  {id:"A01",driver:"Arun",start:"A",available:true,coordinates:[11.0056,76.9744]},
+  {id:"A02",driver:"Karthik",start:"B",available:true,coordinates:[11.0232,76.9545]},
+  {id:"A03",driver:"Vijay",start:"E",available:true,coordinates:[11.0048,76.9674]}
 ];
 
 const $ = id => document.getElementById(id);
@@ -130,8 +118,8 @@ REPORT: ${text}. ADDRESS PROVIDED: ${address || "Unknown"}`;
     if(priorityMatch) parsed.priority=priorityMatch[1][0].toUpperCase()+priorityMatch[1].slice(1).toLowerCase();
     // The map location is always resolved from the caller's text/address, never invented by the model.
     parsed.locationId=resolveLocation(text,address) || fallback.locationId;
-    parsed.location = parsed.locationId ? locations[parsed.locationId].name : parsed.location;
-    parsed.aiSource="Pretrained browser model + verified location mapping";
+    parsed.location = address || parsed.location;
+    parsed.aiSource="Pretrained browser model";
     return parsed;
   }catch(err){
     console.warn("Pretrained model unavailable; using safe local extraction fallback.",err);
@@ -140,48 +128,130 @@ REPORT: ${text}. ADDRESS PROVIDED: ${address || "Unknown"}`;
   }
 }
 
-function graph(){
-  const g={}; Object.keys(locations).forEach(k=>g[k]=[]); Object.keys(hospitals).forEach(k=>g[k]=[]);
-  for(const [a,b,w] of edges){g[a].push({to:b,w});g[b].push({to:a,w});}
-  return g;
+async function fetchServiceJson(url,label,options={}){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),25000);
+  try{
+    const response=await fetch(url,{...options,signal:controller.signal});
+    if(!response.ok) throw new Error(`${label} returned HTTP ${response.status}.`);
+    const data=await response.json();
+    if(data.error) throw new Error(`${label}: ${data.error}`);
+    return data;
+  }catch(error){
+    if(error.name==="AbortError") throw new Error(`${label} took too long. Please try again.`);
+    if(error instanceof TypeError) throw new Error(`${label} is unreachable. Check your internet connection and try again.`);
+    throw error;
+  }finally{
+    clearTimeout(timeout);
+  }
 }
 
-function dijkstra(start,end){
-  const g=graph(), dist={}, prev={}, unvisited=new Set(Object.keys(g));
-  Object.keys(g).forEach(k=>dist[k]=Infinity); dist[start]=0;
-  while(unvisited.size){
-    let u=null;
-    for(const n of unvisited) if(u===null || dist[n]<dist[u]) u=n;
-    unvisited.delete(u);
-    if(u===end) break;
-    for(const e of g[u]){
-      if(!unvisited.has(e.to)) continue;
-      const alt=dist[u]+e.w;
-      if(alt<dist[e.to]){dist[e.to]=alt;prev[e.to]=u;}
+async function geocodeAddress(query){
+  const url=`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`;
+  const results=await fetchServiceJson(url,"OpenStreetMap address search");
+  if(!results.length) throw new Error("We couldn’t find that address. Include a town or city and try again.");
+  const result=results[0];
+  return {
+    name:result.display_name,
+    coordinates:[Number(result.lat),Number(result.lon)]
+  };
+}
+
+function serviceCoordinates([lat,lon]){
+  return `${lon},${lat}`;
+}
+
+async function osrmTable(origins,destinations){
+  const allCoordinates=[...origins,...destinations];
+  const sourceIndexes=origins.map((_,index)=>index).join(";");
+  const destinationIndexes=destinations.map((_,index)=>origins.length+index).join(";");
+  const coordinates=allCoordinates.map(serviceCoordinates).join(";");
+  const url=`https://router.project-osrm.org/table/v1/driving/${coordinates}?sources=${sourceIndexes}&destinations=${destinationIndexes}&annotations=duration,distance`;
+  const table=await fetchServiceJson(url,"OpenStreetMap road routing");
+  if(table.code!=="Ok"||!table.durations?.length||!table.distances?.length){
+    throw new Error("No drivable road route was found for these locations.");
+  }
+  return table;
+}
+
+async function osrmRoute(from,to){
+  const url=`https://router.project-osrm.org/route/v1/driving/${serviceCoordinates(from)};${serviceCoordinates(to)}?overview=full&geometries=geojson&steps=false`;
+  const result=await fetchServiceJson(url,"OpenStreetMap road directions");
+  const route=result.routes?.[0];
+  if(result.code!=="Ok"||!route?.geometry?.coordinates?.length){
+    throw new Error("No drivable road route was found for these locations.");
+  }
+  return {
+    coordinates:route.geometry.coordinates.map(([lon,lat])=>[lat,lon]),
+    duration:route.duration,
+    distance:route.distance
+  };
+}
+
+function distanceBetween(a,b){
+  const radians=value=>value*Math.PI/180;
+  const [lat1,lon1]=a.map(radians),[lat2,lon2]=b.map(radians);
+  const dLat=lat2-lat1,dLon=lon2-lon1;
+  const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
+  return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
+}
+
+async function findHospitalsWithNominatim(location){
+  await sleep(1000);
+  const url=`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=20&q=${encodeURIComponent(`hospital near ${location.name}`)}`;
+  const results=await fetchServiceJson(url,"OpenStreetMap hospital search");
+  const candidates=results.filter(result=>result.type==="hospital").map(result=>({
+    name:result.name||result.display_name,
+    coordinates:[Number(result.lat),Number(result.lon)]
+  })).filter(hospital=>
+    hospital.name&&hospital.coordinates.every(Number.isFinite)&&
+    distanceBetween(hospital.coordinates,location.coordinates)<=30000
+  ).sort((a,b)=>distanceBetween(a.coordinates,location.coordinates)-distanceBetween(b.coordinates,location.coordinates));
+  const unique=candidates.filter((candidate,index,list)=>list.findIndex(other=>
+    other.name===candidate.name&&distanceBetween(other.coordinates,candidate.coordinates)<100
+  )===index);
+  if(!unique.length) throw new Error("No OpenStreetMap hospitals were found within 30 km of that address.");
+  return unique.slice(0,8);
+}
+
+async function findNearbyHospitals(location){
+  const [lat,lon]=location.coordinates;
+  const query=`[out:json][timeout:20];(nwr["amenity"="hospital"](around:30000,${lat},${lon}););out center tags 100;`;
+  const url=`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+  try{
+    const data=await fetchServiceJson(url,"OpenStreetMap hospital search");
+    const candidates=(data.elements||[]).map(element=>{
+      const point=element.type==="node"?[element.lat,element.lon]:[element.center?.lat,element.center?.lon];
+      if(!point[0]||!point[1]) return null;
+      return {
+        name:element.tags?.name||element.tags?.["name:en"]||"Unnamed hospital",
+        coordinates:[Number(point[0]),Number(point[1])]
+      };
+    }).filter(Boolean);
+    const unique=candidates.filter((candidate,index,list)=>list.findIndex(other=>
+      other.name===candidate.name&&distanceBetween(other.coordinates,candidate.coordinates)<100
+    )===index);
+    if(!unique.length) throw new Error("No OpenStreetMap hospitals were found within 30 km of that address.");
+    return unique.sort((a,b)=>distanceBetween(a.coordinates,location.coordinates)-distanceBetween(b.coordinates,location.coordinates)).slice(0,8);
+  }catch(overpassError){
+    console.warn("Overpass hospital search failed; trying Nominatim.",overpassError);
+    try{
+      return await findHospitalsWithNominatim(location);
+    }catch(nominatimError){
+      const overpassMessage=overpassError instanceof Error?overpassError.message:String(overpassError);
+      const nominatimMessage=nominatimError instanceof Error?nominatimError.message:String(nominatimError);
+      throw new Error(`Hospital search failed. Overpass: ${overpassMessage} Nominatim fallback: ${nominatimMessage}`);
     }
   }
-  if(dist[end]===Infinity) return null;
-  const path=[]; let cur=end;
-  while(cur){path.unshift(cur); if(cur===start) break; cur=prev[cur];}
-  return {path,distance:dist[end]};
 }
 
-function candidateVehicles(target){
-  return vehicles.filter(v=>v.available).map(v=>{
-    const route=dijkstra(v.start,target);
-    return {...v,route,distance:route?route.distance:Infinity};
-  }).filter(v=>v.route).sort((a,b)=>a.distance-b.distance);
+function formatMinutes(seconds){
+  return Math.max(1,Math.ceil(seconds/60));
 }
 
-
-function candidateHospitals(from){
-  return Object.keys(hospitals).map(id=>{
-    const route=dijkstra(from,id);
-    return {id,name:hospitals[id].name,route,distance:route?route.distance:Infinity};
-  }).filter(h=>h.route).sort((a,b)=>a.distance-b.distance);
+function formatDistance(meters){
+  return meters>=1000?`${(meters/1000).toFixed(1)} km`:`${Math.round(meters)} m`;
 }
-
-function hospitalName(id){ return hospitals[id]?.name || "Hospital"; }
 
 function publish(request){
   localStorage.setItem("emergency_dispatch_request",JSON.stringify(request));
@@ -222,17 +292,27 @@ function ensureLeafletMap(){
   return liveMap;
 }
 
-function routePosition(routeIds, progress){
-  if (!routeIds?.length) return null;
-  const segmentCount = routeIds.length - 1;
-  if (!segmentCount) return mapPositions[routeIds[0]] || null;
-  const routeProgress = Math.max(0, Math.min(1, progress)) * segmentCount;
-  const segment = Math.min(segmentCount - 1, Math.floor(routeProgress));
-  const fraction = routeProgress - segment;
-  const from = mapPositions[routeIds[segment]];
-  const to = mapPositions[routeIds[segment + 1]];
-  if (!from || !to) return null;
-  return [from[0] + (to[0] - from[0]) * fraction, from[1] + (to[1] - from[1]) * fraction];
+function routePosition(routeCoordinates, progress){
+  if(!routeCoordinates?.length) return null;
+  if(routeCoordinates.length===1) return routeCoordinates[0];
+  const lengths=[];
+  let totalLength=0;
+  for(let index=1;index<routeCoordinates.length;index++){
+    const length=distanceBetween(routeCoordinates[index-1],routeCoordinates[index]);
+    lengths.push(length);
+    totalLength+=length;
+  }
+  if(totalLength===0) return routeCoordinates[0];
+  let remaining=totalLength*Math.max(0,Math.min(1,progress));
+  for(let index=0;index<lengths.length;index++){
+    if(remaining<=lengths[index]||index===lengths.length-1){
+      const fraction=lengths[index]?remaining/lengths[index]:0;
+      const from=routeCoordinates[index],to=routeCoordinates[index+1];
+      return [from[0]+(to[0]-from[0])*fraction,from[1]+(to[1]-from[1])*fraction];
+    }
+    remaining-=lengths[index];
+  }
+  return routeCoordinates[routeCoordinates.length-1];
 }
 
 function updateLiveMap(requestData){
@@ -242,17 +322,19 @@ function updateLiveMap(requestData){
   liveMapMarkers = [];
   if (liveMapRoute) liveMapRoute.remove();
 
-  const emergencyLocation = mapPositions[requestData?.locationId] || mapPositions.D;
-  const selectedVehicle = mapPositions[requestData?.vehicleStart] || mapPositions.A;
-  const hospitalLocation = mapPositions[requestData?.hospitalId] || mapPositions.H1;
+  const emergencyLocation = requestData?.locationCoordinates || mapPositions[requestData?.locationId] || mapPositions.D;
+  const selectedVehicle = requestData?.vehicleCoordinates || mapPositions[requestData?.vehicleStart] || mapPositions.A;
+  const hospitalLocation = requestData?.hospitalCoordinates || mapPositions[requestData?.hospitalId] || mapPositions.H1;
   const hospitalPhase = ["To Hospital", "Hospital Arrived", "Completed"].includes(requestData?.status);
-  const routeIds = hospitalPhase ? requestData?.hospitalRouteIds : requestData?.routeIds;
+  const routeCoordinates = hospitalPhase
+    ? requestData?.hospitalRouteCoordinates || (requestData?.hospitalRouteIds || []).map(id=>mapPositions[id]).filter(Boolean)
+    : requestData?.routeCoordinates || (requestData?.routeIds || []).map(id=>mapPositions[id]).filter(Boolean);
   const progress = Number(requestData?.progress || 0);
   const currentPosition = hospitalPhase
-    ? routePosition(routeIds, progress)
+    ? routePosition(routeCoordinates, progress)
     : requestData?.status === "Arrived"
       ? emergencyLocation
-      : routePosition(routeIds, progress) || selectedVehicle;
+      : routePosition(routeCoordinates, progress) || selectedVehicle;
 
   const emergencyMarker = window.L.marker(emergencyLocation).addTo(map)
     .bindPopup(`<b>${escapeHtml(requestData?.location || "Emergency")}</b>`);
@@ -266,7 +348,7 @@ function updateLiveMap(requestData){
     .bindPopup(`<b>${escapeHtml(requestData?.vehicleId || "Ambulance")}</b><br>${escapeHtml(requestData?.driver || "Driver")}`);
   liveMapMarkers.push(ambulanceMarker);
 
-  const routePositions = (routeIds || []).map(id => mapPositions[id]).filter(Boolean);
+  const routePositions = routeCoordinates || [];
   if (routePositions.length > 1) {
     liveMapRoute = window.L.polyline(routePositions, { color: "#1769e0", weight: 5 }).addTo(map);
   }
@@ -282,70 +364,121 @@ function updateLiveMap(requestData){
 async function sendEmergency(){
   const text=$("emergencyText").value.trim();
   const address=$("address").value.trim();
-  if(!text && !address){alert("Please enter the emergency information.");return;}
-  $("sendBtn").disabled=true; $("demoBtn").disabled=true; $("systemStatus").textContent="Dispatching...";
-  $("resultEmpty").classList.add("hidden"); $("result").classList.remove("hidden");
-  $("aiBadge").textContent="Preparing"; $("aiBadge").className="badge";
-  $("routeBox").textContent="Waiting for AI analysis...";
-  $("timeline").innerHTML="";
-  addTimeline("📞 Caller information received","active");
-  await sleep(350);
-  const ai=await analyzeWithAI(text,address);
-  setLoading(false);
-  addTimeline(`Emergency identified: ${ai.type} • ${ai.priority}`);
-  await sleep(300);
-
-  const target=ai.locationId;
-  if(!target){
-    alert("Please provide a recognizable emergency location such as Town Hall, Gandhipuram, RS Puram, Ukkadam, Saibaba Colony or Race Course.");
-    $("sendBtn").disabled=false; $("demoBtn").disabled=false;
+  const dispatchError=$("dispatchError");
+  dispatchError.classList.add("hidden");
+  dispatchError.textContent="";
+  if(!text && !address){
+    dispatchError.textContent="Enter what happened and where it happened.";
+    dispatchError.classList.remove("hidden");
+    $("emergencyText").focus();
     return;
   }
-  const candidates=candidateVehicles(target);
-  if(!candidates.length){alert("No available vehicle can reach this location in the demo graph."); $("sendBtn").disabled=false;$("demoBtn").disabled=false;return;}
-  const selected=candidates[0];
-  const route=selected.route;
-  const eta=Math.max(1,Math.round(route.distance));
-  const hospitalCandidates=candidateHospitals(target);
-  const selectedHospital=hospitalCandidates[0];
-  const hospitalRoute=selectedHospital.route;
-  const hospitalEta=Math.max(1,Math.round(hospitalRoute.distance));
+  if(!address){
+    dispatchError.textContent="Enter a street, landmark, town or city so OpenStreetMap can find the emergency.";
+    dispatchError.classList.remove("hidden");
+    $("address").focus();
+    return;
+  }
+  $("sendBtn").disabled=true; $("demoBtn").disabled=true; $("systemStatus").textContent="Dispatching...";
+  $("resultEmpty").classList.add("hidden"); $("result").classList.remove("hidden");
+  $("aiBadge").textContent="Finding location"; $("aiBadge").className="badge";
+  $("routeBox").textContent="Searching OpenStreetMap for the emergency address...";
+  $("hospitalRouteBox").textContent="Searching for nearby hospitals...";
+  $("timeline").innerHTML="";
+  addTimeline("📞 Caller information received","active");
+  setLoading(true,"Finding your location...","Searching OpenStreetMap and checking real road routes.");
+  try{
+    const [incident,ai]=await Promise.all([
+      geocodeAddress(address),
+      analyzeWithAI(text,address)
+    ]);
+    setLoading(true,"Finding a nearby hospital...","Checking OpenStreetMap hospitals and real road travel times.");
+    addTimeline(`📍 Location found: ${incident.name}`);
 
-  $("aiBadge").textContent="Driver selected"; $("aiBadge").className="badge";
-  $("typeValue").textContent=ai.type;
-  $("locationValue").textContent=ai.location || locations[target].name;
-  $("peopleValue").textContent=ai.people;
-  $("vehicleValue").textContent=`${selected.id} — ${selected.driver}`;
-  $("priorityBadge").textContent=ai.priority;
-  $("priorityBadge").className="priority "+ai.priority.toLowerCase();
-  $("routeBox").innerHTML=`<div class="route-path">${route.path.map(id=>locations[id]?.name || hospitalName(id)).join(" → ")}</div><div><b>Estimated time:</b> ${eta} minutes</div>`;
-  if($("hospitalValue")) $("hospitalValue").textContent=selectedHospital.name;
-  if($("hospitalRouteBox")) $("hospitalRouteBox").innerHTML=`<b>${escapeHtml(selectedHospital.name)}</b><br>${hospitalRoute.path.map(id=>locations[id]?.name || hospitalName(id)).join(" → ")}<br><b>${hospitalEta} min</b>`;
-  addTimeline(`🚑 ${selected.id} (${selected.driver}) selected as nearest available vehicle`);
-  await sleep(250);
-  addTimeline(`🧮 Dijkstra route calculated: ${route.path.join(" → ")}`);
-  await sleep(250);
+    const hospitalCandidates=await findNearbyHospitals(incident);
+    const availableVehicles=vehicles.filter(vehicle=>vehicle.available);
+    const [vehicleTable,hospitalTable]=await Promise.all([
+      osrmTable(availableVehicles.map(vehicle=>vehicle.coordinates),[incident.coordinates]),
+      osrmTable([incident.coordinates],hospitalCandidates.map(hospital=>hospital.coordinates))
+    ]);
+    const reachableVehicles=availableVehicles.map((vehicle,index)=>({
+      vehicle,
+      duration:vehicleTable.durations?.[index]?.[0]
+    })).filter(candidate=>Number.isFinite(candidate.duration))
+      .sort((a,b)=>a.duration-b.duration);
+    if(!reachableVehicles.length) throw new Error("No available demo ambulance has a drivable route to this location.");
 
-  currentRequest={
-    id:"EMG-"+Date.now(), timestamp:new Date().toLocaleTimeString(),
-    caller:"Caller",
-    text,address,
-    type:ai.type,priority:ai.priority,people:ai.people,
-    location:ai.location || locations[target].name, locationId:target,
-    vehicleId:selected.id,driver:selected.driver,vehicleStart:selected.start,vehicleStartName:locations[selected.start].name,
-    route:route.path.map(id=>locations[id].name), routeIds:route.path,
-    eta, hospitalId:selectedHospital.id, hospital:selectedHospital.name, hospitalRoute:hospitalRoute.path.map(id=>locations[id]?.name || hospitalName(id)), hospitalRouteIds:hospitalRoute.path, hospitalEta,
-    status:"NEW EMERGENCY", phase:"toEmergency", aiSource:ai.aiSource
-  };
-  publish(currentRequest);
-  updateLiveMap(currentRequest);
-  $("userMapPosition").textContent=`🚑 ${selected.driver} is waiting at ${locations[selected.start].name}`;
-  $("driverReturnBadge").textContent="NEW EMERGENCY";
-  $("driverReturn").innerHTML=`<strong>📱 Emergency sent to ${escapeHtml(selected.driver)}</strong><br>Waiting for driver acceptance.`;
-  addTimeline(`📱 Emergency sent instantly to Driver Dashboard — ${selected.driver}`);
-  $("systemStatus").textContent="Emergency Dispatched";
-  $("systemDot").style.background="#ffbd3e";
-  $("sendBtn").disabled=false;$("demoBtn").disabled=false;
+    const reachableHospitals=hospitalCandidates.map((hospital,index)=>({
+      ...hospital,
+      duration:hospitalTable.durations?.[0]?.[index],
+      distance:hospitalTable.distances?.[0]?.[index]
+    })).filter(hospital=>Number.isFinite(hospital.duration)&&Number.isFinite(hospital.distance))
+      .sort((a,b)=>a.duration-b.duration);
+    if(!reachableHospitals.length) throw new Error("No nearby hospital has a drivable route from this location.");
+
+    const selected=reachableVehicles[0].vehicle;
+    const selectedHospital=reachableHospitals[0];
+    setLoading(true,"Preparing road directions...","Loading the selected ambulance and hospital routes.");
+    const [route,hospitalRoute]=await Promise.all([
+      osrmRoute(selected.coordinates,incident.coordinates),
+      osrmRoute(incident.coordinates,selectedHospital.coordinates)
+    ]);
+    const eta=formatMinutes(route.duration);
+    const hospitalEta=formatMinutes(hospitalRoute.duration);
+    setLoading(false);
+    addTimeline(`Emergency identified: ${ai.type} • ${ai.priority}`);
+    addTimeline(`🚑 Nearest available demo ambulance: ${selected.id} (${selected.driver})`);
+    addTimeline(`🗺️ OpenStreetMap road route: ${formatDistance(route.distance)} • about ${eta} min`);
+    addTimeline(`🏥 Nearest routed hospital: ${selectedHospital.name}`);
+
+    $("aiBadge").textContent="Driver selected"; $("aiBadge").className="badge";
+    $("typeValue").textContent=ai.type;
+    $("locationValue").textContent=incident.name;
+    $("peopleValue").textContent=ai.people;
+    $("vehicleValue").textContent=`${selected.id} — ${selected.driver}`;
+    $("priorityBadge").textContent=ai.priority;
+    $("priorityBadge").className="priority "+ai.priority.toLowerCase();
+    $("routeBox").innerHTML=`<div class="route-path">${escapeHtml(selected.start==="A"?"Race Course":selected.start==="B"?"Saibaba Colony":"RS Puram")} → ${escapeHtml(incident.name)}</div><div><b>Road distance:</b> ${formatDistance(route.distance)} • <b>Estimated drive:</b> ${eta} min</div>`;
+    $("hospitalValue").textContent=selectedHospital.name;
+    $("hospitalRouteBox").innerHTML=`<b>${escapeHtml(selectedHospital.name)}</b><br><b>Road distance:</b> ${formatDistance(hospitalRoute.distance)} • <b>Estimated drive:</b> ${hospitalEta} min`;
+
+    currentRequest={
+      id:"EMG-"+Date.now(),timestamp:new Date().toLocaleTimeString(),
+      caller:"Caller",text,address,type:ai.type,priority:ai.priority,people:ai.people,
+      location:incident.name,locationCoordinates:incident.coordinates,
+      vehicleId:selected.id,driver:selected.driver,vehicleStart:selected.start,
+      vehicleStartName:locations[selected.start].name,vehicleCoordinates:selected.coordinates,
+      route:[selected.start==="A"?"Race Course":selected.start==="B"?"Saibaba Colony":"RS Puram",incident.name],
+      routeCoordinates:route.coordinates,routeDistance:route.distance,eta,
+      hospital:selectedHospital.name,hospitalCoordinates:selectedHospital.coordinates,
+      hospitalRoute:[incident.name,selectedHospital.name],hospitalRouteCoordinates:hospitalRoute.coordinates,
+      hospitalRouteDistance:hospitalRoute.distance,hospitalEta,
+      status:"NEW EMERGENCY",phase:"toEmergency",progress:0,aiSource:ai.aiSource
+    };
+    publish(currentRequest);
+    updateLiveMap(currentRequest);
+    $("userMapPosition").textContent=`🚑 ${selected.driver} is waiting at the demo base in ${selected.start==="A"?"Race Course":selected.start==="B"?"Saibaba Colony":"RS Puram"}, Coimbatore.`;
+    $("driverReturnBadge").textContent="NEW EMERGENCY";
+    $("driverReturn").innerHTML=`<strong>📱 Emergency sent to ${escapeHtml(selected.driver)}</strong><br>Ambulance movement is simulated from its demo base.`;
+    addTimeline(`📱 Emergency sent to Driver Dashboard — ${selected.driver}`);
+    $("systemStatus").textContent="Emergency Dispatched";
+    $("systemDot").style.background="#ffbd3e";
+  }catch(error){
+    console.error("Emergency dispatch failed",error);
+    const message=error instanceof Error?error.message:"An unexpected error prevented dispatch.";
+    dispatchError.textContent=message;
+    dispatchError.classList.remove("hidden");
+    $("aiBadge").textContent="Dispatch failed"; $("aiBadge").className="badge";
+    $("routeBox").textContent="No ambulance route is available because dispatch failed.";
+    $("hospitalRouteBox").textContent="No hospital route is available because dispatch failed.";
+    $("systemStatus").textContent="Dispatch Failed";
+    $("systemDot").style.background="#d92d20";
+    addTimeline(`Dispatch failed: ${message}`,"active");
+  }finally{
+    setLoading(false);
+    $("sendBtn").disabled=false;
+    $("demoBtn").disabled=false;
+  }
 }
 
 
@@ -378,9 +511,9 @@ function restoreSavedRequest(){
     $("vehicleValue").textContent=`${r.vehicleId || "--"} — ${r.driver || "Driver"}`;
     $("priorityBadge").textContent=r.priority || "Normal";
     $("priorityBadge").className="priority "+String(r.priority||"Normal").toLowerCase();
-    $("routeBox").innerHTML=`<div class="route-path">${(r.route||[]).map(escapeHtml).join(" → ")}</div><div><b>Estimated time:</b> ${r.eta||"--"} minutes</div>`;
+    $("routeBox").innerHTML=`<div class="route-path">${(r.route||[]).map(escapeHtml).join(" → ")}</div><div><b>Road distance:</b> ${r.routeDistance?formatDistance(r.routeDistance):"--"} • <b>Estimated drive:</b> ${r.eta||"--"} min</div>`;
     if($("hospitalValue")) $("hospitalValue").textContent=r.hospital||"--";
-    if($("hospitalRouteBox")) $("hospitalRouteBox").innerHTML=`<b>${escapeHtml(r.hospital||"--")}</b><br>${(r.hospitalRoute||[]).map(escapeHtml).join(" → ")}<br><b>${r.hospitalEta||"--"} min</b>`;
+    if($("hospitalRouteBox")) $("hospitalRouteBox").innerHTML=`<b>${escapeHtml(r.hospital||"--")}</b><br><b>Road distance:</b> ${r.hospitalRouteDistance?formatDistance(r.hospitalRouteDistance):"--"} • <b>Estimated drive:</b> ${r.hospitalEta||"--"} min`;
     updateLiveMap(r);
     showDriverReturn(r);
     $("systemStatus").textContent=r.status==="Completed"?"Emergency Completed":"Emergency Dispatched";

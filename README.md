@@ -1,29 +1,21 @@
-# Emergency Vehicle Route Optimizer — Fixed AI Dispatch Demo
+# Emergency Vehicle Route Optimizer
 
-## What is fixed
-- Emergency location comes from the caller's entered address/message.
-- Town Hall, Gandhipuram, RS Puram, Ukkadam, Saibaba Colony and Race Course are mapped separately.
-- The nearest available ambulance is selected using shortest travel time on the graph.
-- Driver dashboard is no longer locked to A03; it displays whichever ambulance the dispatcher selected.
-- Driver status updates are sent back to the Emergency Dashboard.
-- The Emergency Dashboard restores the active emergency when you return from the Driver Dashboard instead of showing a blank fresh page.
-- Completed status is stored and displayed to the caller.
-- OpenStreetMap is used on both dashboards to show the selected vehicle, incident, hospital, and simulated route.
-- OpenStreetMap tiles are used on both dashboards to show the simulated vehicle, emergency, hospital, and route locations.
+## Map and route integration
+- Enter a street, landmark, town, or city and the app looks it up with OpenStreetMap Nominatim.
+- Candidate demo ambulance bases are compared using OSRM road-driving times; the closest reachable base is selected.
+- Nearby hospitals are discovered from OpenStreetMap (with Nominatim fallback if Overpass is unavailable) and ranked by OSRM driving time. Both routes are shown on OSM maps.
+- The driver dashboard accepts the emergency and simulates progress along the returned road geometry.
+- Driver status updates are shared with the caller dashboard, and the active request is restored when the page is reopened.
 
 ## Run
 1. Extract the ZIP.
 2. Open the extracted folder in VS Code.
-3. Open `index.html` with Live Server.
+3. Open `index.html` with Live Server. Internet access is required for map tiles and routing lookups.
 4. Use **Open** in the header to switch between Caller view, Driver view, and Help. No login is required.
-5. Enter a location such as `Town Hall, Coimbatore` and send the emergency.
-6. On the Ambulance profile, accept the emergency and use the single **Next step** button to start each trip.
+5. Enter the emergency details and a full location, for example `Thanjavur, Tamil Nadu`, then send the emergency.
+6. In Driver view, accept the emergency and use the single **Next step** button for each trip.
 7. Arrival is simulated automatically; complete the trip after the ambulance reaches the hospital.
 8. Switch back to Patient / User. The same emergency and the driver's latest status are shown.
 
 ## Important
-This is an academic prototype. OpenStreetMap provides the map background; demo locations, routes, vehicle positions, and movement are simulated and are not live GPS or turn-by-turn road directions. Internet access is required to load Leaflet and OpenStreetMap tiles. The browser AI is a pretrained model when it is available; a local extraction fallback keeps the demo working if the model cannot load. It is not connected to a real emergency service.
-
-
-## Hospital routing update
-The system now selects the nearest demo hospital from the emergency location using Dijkstra, then provides a second shortest route from the emergency location to that hospital. The driver flow is: Accept → Go to Emergency → Arrived at Emergency → Go to Hospital → Arrived at Hospital → Completed. Hospital names and road coordinates are demo data for the academic prototype.
+OpenStreetMap map data and OSRM road-driving routes are fetched from public services and may be unavailable or rate-limited. Their drive times do not include live traffic or emergency-vehicle rules. Ambulance bases and availability remain simulated at fixed Coimbatore locations, so a dispatch to another city can show a very long route and is not a real nearby emergency response. The animated vehicle is not live GPS. This academic prototype is not connected to emergency services.

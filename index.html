@@ -11,7 +11,7 @@
 <body>
 <header class="topbar">
   <div>
-    <div class="brand">🚑 Emergency AI Dispatch</div>
+    <div class="brand">🚑 Emergency Dispatch</div>
     <div class="subtitle">Emergency help, with a nearby ambulance on the way</div>
   </div>
   <div class="topbar-actions">
@@ -30,7 +30,7 @@
     <div>
       <span class="page-kicker"><span class="live-indicator"></span> EMERGENCY INTAKE</span>
       <h1>How can we help?</h1>
-      <p>Tell us what happened and where. We’ll find the closest available ambulance.</p>
+      <p>Tell us what happened and where. We’ll find the closest available demo ambulance.</p>
     </div>
   </section>
 
@@ -45,8 +45,9 @@
       <textarea id="emergencyText" rows="5" placeholder="Briefly describe the emergency"></textarea>
 
       <label for="address">Where did it happen?</label>
-      <input id="address" placeholder="Area or landmark, e.g. Gandhipuram">
-      <small class="field-hint">Use a mapped area: Gandhipuram, Town Hall, RS Puram, Ukkadam, Saibaba Colony or Race Course.</small>
+      <input id="address" placeholder="Street, town or city, e.g. Thanjavur">
+      <small class="field-hint">Enter the nearest street, landmark, town or city so OpenStreetMap can find it.</small>
+      <p id="dispatchError" class="dispatch-error hidden" role="alert"></p>
 
       <button id="sendBtn" class="primary full">Send emergency</button>
       <button id="demoBtn" class="secondary full">Use sample details</button>
@@ -57,7 +58,7 @@
       </div>
 
       <div class="info-note">
-        Your report is shared with the selected driver. This prototype uses simulated locations and routes.
+        Routes and nearby hospitals come from OpenStreetMap. Ambulance bases are simulated in Coimbatore; this demo does not have live vehicle GPS or traffic data.
       </div>
     </section>
 
@@ -100,7 +101,7 @@
 
         <div class="dispatch-card">
           <div class="card-heading"><b>🏥 Hospital destination</b><span class="algorithm">Next</span></div>
-          <div id="hospitalRouteBox" class="route-box">The nearest hospital and shortest hospital route will appear here.</div>
+          <div id="hospitalRouteBox" class="route-box">A nearby hospital and its road-drive estimate will appear here.</div>
         </div>
 
       </div>
@@ -126,7 +127,7 @@
   </section>
 </main>
 
-<footer>Academic prototype • Emergency Vehicle Route Optimization using Shortest Path Algorithms</footer>
+<footer>Prototype using OpenStreetMap • Public routing services • Demo ambulance locations, not live GPS</footer>
 <script src="profile-switcher.js" defer></script>
 <script type="module" src="app.js"></script>
 </body>

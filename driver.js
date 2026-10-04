@@ -9,7 +9,7 @@ function showDriverDashboard(){
   if(request){
     driverMapBounds=null;
     const onHospitalTrip=request.phase==="toHospital"||request.phase==="hospitalArrived"||request.phase==="completed";
-    updateDriverMap(onHospitalTrip?request.hospitalRouteIds||[]:request.routeIds||[],Number(request.progress||0),request.phase||"toEmergency");
+    updateDriverMap(onHospitalTrip?request.hospitalRouteCoordinates||request.hospitalRouteIds||[]:request.routeCoordinates||request.routeIds||[],Number(request.progress||0),request.phase||"toEmergency");
   }
 }
 
@@ -56,22 +56,38 @@ function syncRequestActions(r){
 
 function routePosition(routeIds,progress){
   if(!routeIds?.length) return null;
+  const coordinates=routeIds.map(point=>Array.isArray(point)?point:mapNodes[point]?.position).filter(Boolean);
+  if(!coordinates.length) return null;
+  if(coordinates.length===1) return coordinates[0];
   const segments=routeIds.length-1;
-  if(!segments) return mapNodes[routeIds[0]]?.position || null;
-  const position=Math.max(0,Math.min(1,progress))*segments;
-  const segment=Math.min(segments-1,Math.floor(position));
-  const fraction=position-segment;
-  const from=mapNodes[routeIds[segment]]?.position;
-  const to=mapNodes[routeIds[segment+1]]?.position;
-  if(!from || !to) return null;
-  return [from[0]+(to[0]-from[0])*fraction,from[1]+(to[1]-from[1])*fraction];
+  if(!segments) return coordinates[0];
+  const lengths=[];
+  let total=0;
+  for(let index=1;index<coordinates.length;index++){
+    const [lat1,lon1]=coordinates[index-1].map(value=>value*Math.PI/180);
+    const [lat2,lon2]=coordinates[index].map(value=>value*Math.PI/180);
+    const deltaLat=lat2-lat1,deltaLon=lon2-lon1;
+    const h=Math.sin(deltaLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(deltaLon/2)**2;
+    const length=6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
+    lengths.push(length);total+=length;
+  }
+  let remaining=total*Math.max(0,Math.min(1,progress));
+  for(let index=0;index<lengths.length;index++){
+    if(remaining<=lengths[index]||index===lengths.length-1){
+      const fraction=lengths[index]?remaining/lengths[index]:0;
+      const from=coordinates[index],to=coordinates[index+1];
+      return [from[0]+(to[0]-from[0])*fraction,from[1]+(to[1]-from[1])*fraction];
+    }
+    remaining-=lengths[index];
+  }
+  return coordinates[coordinates.length-1];
 }
 
 function updateDriverMap(routeIds=[],progress=0,phase="toEmergency"){
   if(!driverMap){
     const element=$("routeLeafletMap");
     if(!element || !window.L) return;
-    driverMap=window.L.map(element,{scrollWheelZoom:false}).setView([11.0168,76.9558],12);
+    driverMap=window.L.map(element,{scrollWheelZoom:false}).setView(request?.locationCoordinates||[11.0168,76.9558],12);
     window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
       attribution:'&copy; OpenStreetMap contributors'
     }).addTo(driverMap);
@@ -81,12 +97,12 @@ function updateDriverMap(routeIds=[],progress=0,phase="toEmergency"){
   driverMapMarkers.forEach(marker=>marker.remove());
   driverMapMarkers=[];
 
-  const path=(routeIds||[]).map(id=>mapNodes[id]?.position).filter(Boolean);
+  const path=(routeIds||[]).map(point=>Array.isArray(point)?point:mapNodes[point]?.position).filter(Boolean);
   if(path.length>1) driverMapRoute=window.L.polyline(path,{color:"#1769e0",weight:5}).addTo(driverMap);
   if(request){
-    const emergency=mapNodes[request.locationId]?.position;
-    const hospital=mapNodes[request.hospitalId]?.position;
-    const base=mapNodes[request.vehicleStart]?.position;
+    const emergency=request.locationCoordinates||mapNodes[request.locationId]?.position;
+    const hospital=request.hospitalCoordinates||mapNodes[request.hospitalId]?.position;
+    const base=request.vehicleCoordinates||mapNodes[request.vehicleStart]?.position;
     const current=phase==="atEmergency"?emergency:phase==="hospitalArrived"||phase==="completed"?hospital:routePosition(routeIds,progress)||base;
     [[emergency,request.location||"Emergency"],[hospital,request.hospital||"Hospital"],[current,`${request.vehicleId||"Ambulance"} — ${request.driver||"Driver"}`]].forEach(([position,label])=>{
       if(position) driverMapMarkers.push(window.L.marker(position).addTo(driverMap).bindPopup(`<b>${escapeHtml(label)}</b>`));
@@ -110,7 +126,7 @@ function showRequest(r){
   if(!r) return;
   setText("driverVehicle",`AMBULANCE ${r.vehicleId || "--"}`);
   setText("driverName",`Welcome, ${r.driver || "Driver"}`);
-  setText("driverAvailability",r.status === "Completed" ? "Trip completed • Waiting for next dispatch" : r.status&&r.status!=="NEW EMERGENCY" ? "Emergency in progress" : "Available • Waiting for emergency");
+  setText("driverAvailability",r.status === "Completed" ? "Trip completed • Waiting for next dispatch" : r.status&&r.status!=="NEW EMERGENCY" ? "Emergency in progress" : "Demo ambulance • Waiting for emergency");
   setText("incomingTitle",r.status==="Completed"?"EMERGENCY COMPLETED":r.status&&r.status!=="NEW EMERGENCY"?"EMERGENCY IN PROGRESS":"NEW EMERGENCY RECEIVED");
   $("waiting").classList.add("hidden"); $("incoming").classList.remove("hidden");
   setText("incomingTime",r.timestamp); setText("driverType",r.type); setText("driverLocation",r.location); setText("driverPeople",r.people); setText("driverDetails",r.text); setText("driverPriority",r.priority);
@@ -118,7 +134,7 @@ function showRequest(r){
   setText("routeFrom",r.vehicleStartName || "Vehicle Base"); setText("routeTo",r.location); setText("routeEta",r.eta+" min");
   $("driverRoute").innerHTML=`<b>To emergency:</b> ${r.route.map((x,i)=>`${i?'<b> ↓ </b>':''}${escapeHtml(x)}`).join("")}<br><br><b>Then to hospital:</b> ${(r.hospitalRoute||[]).map((x,i)=>`${i?'<b> ↓ </b>':''}${escapeHtml(x)}`).join("")}<br><br>🏥 <b>${escapeHtml(r.hospital||"Hospital")}</b> • ${r.hospitalEta||"--"} min`;
   const onHospitalTrip=r.phase==="toHospital"||r.phase==="hospitalArrived"||r.phase==="completed";
-  const route=onHospitalTrip?r.hospitalRouteIds||[]:r.routeIds||[];
+  const route=onHospitalTrip?r.hospitalRouteCoordinates||r.hospitalRouteIds||[]:r.routeCoordinates||r.routeIds||[];
   updateDriverMap(route,Number(r.progress||0),r.phase||"toEmergency");
   setText("mapPosition",r.currentNode?`Ambulance location: ${r.currentNode}`:"Vehicle waiting at "+(r.vehicleStartName||"Vehicle Base"));
   setText("statusBadge",(r.status||"NEW ALERT").toUpperCase()); $("statusBadge").className="badge";
@@ -157,7 +173,7 @@ function updateStatus(status){
     request.phase="atEmergency";
     publishUpdate(status,{progress:1,currentNode:request.location});
     setText("mapPosition","📍 Ambulance arrived at emergency location");
-    updateDriverMap(request.routeIds||[],1,"atEmergency");
+    updateDriverMap(request.routeCoordinates||request.routeIds||[],1,"atEmergency");
     syncRequestActions(request);
     setText("driverLog",`Ambulance arrived at ${request.location}. Click To Hospital to continue.`);
   } else if(status==="To Hospital"){
@@ -168,7 +184,7 @@ function updateStatus(status){
     request.phase="hospitalArrived";
     publishUpdate(status,{progress:1,currentNode:request.hospital});
     setText("mapPosition","🏥 Ambulance arrived at "+request.hospital);
-    updateDriverMap(request.hospitalRouteIds||[],1,"hospitalArrived");
+    updateDriverMap(request.hospitalRouteCoordinates||request.hospitalRouteIds||[],1,"hospitalArrived");
     syncRequestActions(request);
     setText("driverLog",`Ambulance arrived at ${request.hospital}. You can now complete the emergency.`);
   } else if(status==="Completed"){
@@ -187,33 +203,47 @@ function startMovement(startProgress=0){
   const tick=(now)=>{
     if(!request) return;
     const progress=Math.min(1,(now-animationStart)/ANIMATION_MS);
-    const route=request.routeIds||[];
-    const segment=Math.min(route.length-1,Math.floor(progress*Math.max(1,route.length-1)));
-    const nodeName=mapNodes[route[Math.min(segment,route.length-1)]]?.name || "En route";
+    const route=request.routeCoordinates||request.routeIds||[];
     updateDriverMap(route,progress,"toEmergency");
-    setText("mapPosition",progress>=1?"Arrived at "+request.location:`En route • near ${nodeName}`);
+    setText("mapPosition",progress>=1?"Arrived at "+request.location:`En route to ${request.location}`);
     const remaining=Math.max(0,Math.ceil((request.eta||1)*(1-progress))); setText("routeEtaLive",remaining+" min remaining");
-    publishUpdate("En Route",{progress,currentNode:progress>=1?request.location:nodeName,phase:"toEmergency"});
-    if(progress<1){animationTimer=requestAnimationFrame(tick);}else{stopMovement(); publishUpdate("Arrived",{progress:1,currentNode:request.location,phase:"atEmergency"}); setText("statusBadge","ARRIVED"); $("statusBadge").className="badge"; syncRequestActions(request); setText("driverLog","Ambulance reached the emergency location. Start the hospital trip when ready.");}
-  }; animationTimer=requestAnimationFrame(tick);
+    publishUpdate("En Route",{progress,currentNode:progress>=1?request.location:"En route",phase:"toEmergency"});
+    if(progress>=1){
+      stopMovement();
+      publishUpdate("Arrived",{progress:1,currentNode:request.location,phase:"atEmergency"});
+      setText("statusBadge","ARRIVED"); $("statusBadge").className="badge";
+      updateDriverMap(route,1,"atEmergency");
+      syncRequestActions(request);
+      setText("driverLog","Ambulance reached the emergency location. Start the hospital trip when ready.");
+    }
+  };
+  tick(performance.now());
+  animationTimer=setInterval(()=>tick(performance.now()),500);
 }
 function startHospitalMovement(startProgress=0){
   stopMovement(); animationStart=performance.now()-Math.max(0,Math.min(1,startProgress))*ANIMATION_MS;
   const tick=(now)=>{
     if(!request) return;
     const progress=Math.min(1,(now-animationStart)/ANIMATION_MS);
-    const route=request.hospitalRouteIds||[];
-    const segment=Math.min(route.length-1,Math.floor(progress*Math.max(1,route.length-1)));
-    const nodeName=mapNodes[route[Math.min(segment,route.length-1)]]?.name || "En route to hospital";
+    const route=request.hospitalRouteCoordinates||request.hospitalRouteIds||[];
     updateDriverMap(route,progress,"toHospital");
-    setText("mapPosition",progress>=1?"Arrived at "+request.hospital:`En route to hospital • near ${nodeName}`);
+    setText("mapPosition",progress>=1?"Arrived at "+request.hospital:`En route to ${request.hospital}`);
     const remaining=Math.max(0,Math.ceil((request.hospitalEta||1)*(1-progress))); setText("routeEtaLive",remaining+" min to hospital");
-    publishUpdate("To Hospital",{progress,currentNode:progress>=1?request.hospital:nodeName,phase:"toHospital"});
-    if(progress<1){animationTimer=requestAnimationFrame(tick);}else{stopMovement(); publishUpdate("Hospital Arrived",{progress:1,currentNode:request.hospital,phase:"hospitalArrived"}); setText("statusBadge","HOSPITAL ARRIVED"); $("statusBadge").className="badge"; syncRequestActions(request); setText("driverLog",`Ambulance arrived at ${request.hospital}. Complete the emergency when ready.`);}
-  }; animationTimer=requestAnimationFrame(tick);
+    publishUpdate("To Hospital",{progress,currentNode:progress>=1?request.hospital:"En route",phase:"toHospital"});
+    if(progress>=1){
+      stopMovement();
+      publishUpdate("Hospital Arrived",{progress:1,currentNode:request.hospital,phase:"hospitalArrived"});
+      setText("statusBadge","HOSPITAL ARRIVED"); $("statusBadge").className="badge";
+      updateDriverMap(route,1,"hospitalArrived");
+      syncRequestActions(request);
+      setText("driverLog",`Ambulance arrived at ${request.hospital}. Complete the emergency when ready.`);
+    }
+  };
+  tick(performance.now());
+  animationTimer=setInterval(()=>tick(performance.now()),500);
 }
 
-function stopMovement(){if(animationTimer){cancelAnimationFrame(animationTimer);animationTimer=null;}}
+function stopMovement(){if(animationTimer){clearInterval(animationTimer);animationTimer=null;}}
 
 window.addEventListener("storage",e=>{if(e.key==="emergency_dispatch_request"&&e.newValue){try{showRequest(JSON.parse(e.newValue));}catch(err){console.warn("Could not read emergency update",err);}}});
 if("BroadcastChannel" in window){const bc=new BroadcastChannel("emergency_dispatch");bc.onmessage=e=>{if(e.data?.fromDriver) return;showRequest(e.data);};}

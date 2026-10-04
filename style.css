@@ -40,6 +40,7 @@ body{background:var(--bg);font-family:Inter,"Segoe UI",Arial,sans-serif}
 .main-grid input{min-height:46px}
 .main-grid textarea{min-height:132px;resize:vertical}
 .field-hint{display:block;margin-top:7px;color:var(--muted);font-size:12px;line-height:1.5}
+.dispatch-error{margin:10px 0 0;padding:10px 12px;border:1px solid #fecaca;border-radius:9px;background:#fef2f2;color:#991b1b;font-size:13px;line-height:1.5}
 .main-grid .primary{background:#c92b24}
 .main-grid .primary:hover{background:#a9201b}
 .main-grid .secondary{background:#f1f5fb;color:#34445d;border:1px solid #e0e7f0}
